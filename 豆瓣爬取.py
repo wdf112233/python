@@ -1,3 +1,4 @@
+#视频学习地址：https://www.youtube.com/watch?v=exttkF7niKU&list=PL5y2P1AqpsZ8lcW-idM8wfJ2UuscAwrTV&index=8
 import requests
 from bs4 import BeautifulSoup
 
