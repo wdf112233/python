@@ -1,0 +1,108 @@
+from web3 import Web3, Account
+from eth_account.messages import encode_defunct
+import requests
+import json
+
+# Initialize Web3 instance (make sure to connect to a provider if needed)
+web3 = Web3()
+
+# Ethereum account private key
+private_key = '你的私钥'
+
+# Create account object using the private key
+account = Account.from_key(private_key)
+
+# Get account address
+address = account.address
+
+# Headers for the request
+headers = {
+    'Origin': 'https://pilot.ultiverse.io',
+    'Referer': 'https://pilot.ultiverse.io/',
+    'Ul-Auth-Api-Key': 'YWktYWdlbnRAZFd4MGFYWmxjbk5s',
+    'Content-Type': 'application/json'
+}
+
+# Payload for the request
+payload = {
+    "address": address,
+    "feature": "assets-wallet-login",
+    "chainId": 56
+}
+
+# Send POST request
+response = requests.post('https://account-api.ultiverse.io/api/user/signature', headers=headers, json=payload)
+response_json = response.json()
+
+# Extract the message value from the 'data' field
+message = response_json['data']['message']
+
+# Prepare the message for signing
+signable_message = encode_defunct(text=message)
+
+# Sign the message
+signed_message = web3.eth.account.sign_message(signable_message, private_key=private_key)
+
+# 获取到签名值
+signature = signed_message.signature.hex()
+
+
+
+
+# Headers for the request
+headers1 = {
+    'Origin': 'https://pilot.ultiverse.io',
+    'Referer': 'https://pilot.ultiverse.io/',
+    'Ul-Auth-Api-Key': 'YWktYWdlbnRAZFd4MGFYWmxjbk5s',
+    'Content-Type': 'application/json'
+}
+
+# Payload for the request
+payload1 = {
+    "address": address,
+    "chainId": "56",
+    "signature": signature
+}
+
+
+response1 = requests.post('https://account-api.ultiverse.io/api/wallets/signin', headers=headers1, json=payload1)
+
+# 解析 JSON 字符串
+response_json = json.loads(response1.text)
+
+# 提取 access_token
+access_token = response_json['data']['access_token']
+print(access_token)
+# Headers for the request
+headers2 = {
+    "Accept": "*/*",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Content-Length": "39",
+    "Content-Type": "application/json",
+    "Cookie": "_ga=GA1.1.488824705.1709549955; _ga_44L9YPBT7H=GS1.1.1711621014.1.1.1711621135.0.0.0; _ga_2XR1HXN03L=GS1.1.1713963095.23.1.1713963192.0.0.0",
+    "Origin": "https://pilot.ultiverse.io",
+    "Pragma": "no-cache",
+    "Referer": "https://pilot.ultiverse.io/",
+    "Sec-Ch-Ua": "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"",
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": "\"Windows\"",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
+    "Ul-Auth-Address": address,
+    "Ul-Auth-Token":access_token,
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+  }
+
+
+# Payload for the request
+payload2 = {
+    "worldIds": ["Terminus"],
+    "chainId": 204
+}
+
+response2 = requests.post('https://pml.ultiverse.io/api/explore/sign', headers=headers2, json=payload2)
+
+print(response2.text)
