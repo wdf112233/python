@@ -1,0 +1,87 @@
+#项目网站https://www.bitlayer.org/ready-player-one/rank?inviteCode=87b73872
+#请自行先绑定推特账号再来运行改脚本！
+# 该脚本没有写自动绑定推特功能，
+# 只能每天自动投票！
+#脚本问题联系vx：xiaofe999666
+#编写不易。
+
+
+from web3 import Web3
+from eth_account.messages import encode_defunct
+import requests
+import json
+import random
+
+# 初始化Web3
+w3 = Web3(Web3.HTTPProvider('https://rpc.bitlayer.org'))
+
+# 读取私钥
+def read_private_keys(file_path):
+    with open(file_path, 'r') as file:
+        return [line.strip() for line in file]
+
+# 签名并获取token
+def get_token(private_key):
+    message_text = "BITLAYER"
+    message = encode_defunct(text=message_text)
+    signed_message = w3.eth.account.sign_message(message, private_key=private_key)
+    sig = signed_message.signature.hex()
+    payload = {"sig": sig, "invite_code": ""}
+    headers = {'Origin': 'https://www.bitlayer.org'}
+    response = requests.post('https://api-activity.bitlayer.org/user/login', headers=headers, json=payload)
+    return response.json()['data']['token']
+
+# 检查推特绑定状态
+def is_twitter_bound(address, token):
+    headers = {'Origin': 'https://www.bitlayer.org', 'Authorization': f'Bearer {token}'}
+    response = requests.get(f'https://api-activity.bitlayer.org/activity/ready-player-one/twitter/is_bind?address={address}', headers=headers)
+    return response.json()['code'] == 200
+
+# 获取用户数据
+def get_user_data(token):
+    headers = {
+        'Origin': 'https://www.bitlayer.org',
+        'Authorization': f'Bearer {token}'
+    }
+    response = requests.get('https://api-activity.bitlayer.org/activity/ready-player-one/user?', headers=headers)
+    user_data = response.json()['data']
+    return user_data
+# 投票
+def vote(token):
+    user_data = get_user_data(token)
+    if user_data['left_calls'] > 0:
+        headers = {
+            'Origin': 'https://www.bitlayer.org',
+            'Authorization': f'Bearer {token}'
+        }
+        dapp_id = random.randint(1, 10)  # 随机投1-10
+        response = requests.post('https://api-activity.bitlayer.org/activity/ready-player-one/vote', headers=headers, json={"dapp_id": dapp_id})
+        return response.json()
+    else:
+        print("No remaining votes left for today.")
+        return None
+
+# 保存未绑定推特账户的地址
+def save_unbound_address(file_path, address):
+    with open(file_path, 'a') as file:
+        file.write(f'{address}\n')
+
+# 主流程
+def main(private_keys_file, unbound_file):
+    private_keys = read_private_keys(private_keys_file)
+    for private_key in private_keys:
+        token = get_token(private_key)
+        address = w3.eth.account.from_key(private_key).address
+        if is_twitter_bound(address, token):
+            vote_result = vote(token)
+            if vote_result and vote_result['code'] == 0:
+                print(f'账号：{address}，投票成功！')
+            else:
+                print(f'账号：{address}，投票失败或今日投票次数已用完。')
+        else:
+            print(f'账号：{address}，推特未绑定，跳过投票。')
+            save_unbound_address(unbound_file, address)
+if __name__ == "__main__":
+    private_keys_file = 'keys.txt'#文件名要跟这个一模一样，私钥一行一个，放在这个脚本的同文件里面再运行！
+    unbound_file = 'unbound_twitter_accounts.txt'
+    main(private_keys_file, unbound_file)
