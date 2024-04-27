@@ -47,19 +47,25 @@ def get_user_data(token):
     user_data = response.json()['data']
     return user_data
 # 投票
-def vote(token):
-    user_data = get_user_data(token)
-    if user_data['left_calls'] > 0:
-        headers = {
-            'Origin': 'https://www.bitlayer.org',
-            'Authorization': f'Bearer {token}'
-        }
-        dapp_id = random.randint(1, 10)  # 随机投1-10
-        response = requests.post('https://api-activity.bitlayer.org/activity/ready-player-one/vote', headers=headers, json={"dapp_id": dapp_id})
-        return response.json()
-    else:
-        print("No remaining votes left for today.")
-        return None
+def vote_until_done(token):
+    while True:
+        user_data = get_user_data(token)
+        left_calls = user_data['left_calls']
+        if left_calls > 0:
+            headers = {
+                'Origin': 'https://www.bitlayer.org',
+                'Authorization': f'Bearer {token}'
+            }
+            dapp_id = random.randint(1, 10)  # 随机投1-10
+            response = requests.post('https://api-activity.bitlayer.org/activity/ready-player-one/vote', headers=headers, json={"dapp_id": dapp_id})
+            vote_result = response.json()
+            if vote_result['code'] == 0:
+                print(f'投票成功！剩余票数：{left_calls - 1}')
+            else:
+                print('投票失败，可能是服务器错误或其他问题。')
+        else:
+            print("今日票数已用完。")
+            break
 
 # 保存未绑定推特账户的地址
 def save_unbound_address(file_path, address):
@@ -73,11 +79,7 @@ def main(private_keys_file, unbound_file):
         token = get_token(private_key)
         address = w3.eth.account.from_key(private_key).address
         if is_twitter_bound(address, token):
-            vote_result = vote(token)
-            if vote_result and vote_result['code'] == 0:
-                print(f'账号：{address}，投票成功！')
-            else:
-                print(f'账号：{address}，投票失败或今日投票次数已用完。')
+            vote_until_done(token)
         else:
             print(f'账号：{address}，推特未绑定，跳过投票。')
             save_unbound_address(unbound_file, address)
