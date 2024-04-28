@@ -1,0 +1,68 @@
+#项目网站：https://www.mintchain.io/mint-forest
+#by:鲨鱼辣椒
+#vx:xiaofe999666
+#推特:https://twitter.com/acat665
+from web3 import Web3, Account
+from eth_account.messages import encode_defunct
+import requests
+import random
+import os
+
+web3 = Web3()
+
+LOGIN_URL = 'https://www.mintchain.io/api/tree/login'
+CLAIM_URL = 'https://www.mintchain.io/api/tree/claim'
+
+API_KEY = os.getenv('UL_AUTH_API_KEY')
+COOKIES = os.getenv('COOKIES')
+
+headers = {
+    'Origin': 'https://www.mintchain.io',
+    'Referer': 'https://www.mintchain.io/mint-forest',
+    'Ul-Auth-Api-Key': API_KEY,
+    'Content-Type': 'application/json',
+    'Cookie': COOKIES
+}
+
+def generate_nonce():
+    return str(random.randint(1000000, 9999999))
+
+def login_and_claim(private_key):
+    try:
+        account = Account.from_key(private_key)
+        address = account.address
+        nonce = generate_nonce()
+        message = f"You are participating in the Mint Forest event: \n{address}\n\nNonce: {nonce}"
+        signable_message = encode_defunct(text=message)
+        signed_message = web3.eth.account.sign_message(signable_message, private_key=private_key)
+        signature = signed_message.signature.hex()
+
+        login_payload = {"address": address, "signature": signature, "message": message}
+        login_response = requests.post(LOGIN_URL, headers=headers, json=login_payload)
+        login_response_json = login_response.json()
+
+        if login_response_json.get('code') == 10000:
+            print("登录成功")
+            authorization = login_response_json['result']['access_token']
+
+            claim_headers = headers.copy()
+            claim_headers['Authorization'] = f"Bearer {authorization}"
+
+            claim_payload = {"uid": [], "amount": 500, "includes": [], "type": "daily", "freeze": False, "id": "500_"}
+            claim_response = requests.post(CLAIM_URL, headers=claim_headers, json=claim_payload)
+            claim_response_json = claim_response.json()
+            if claim_response_json.get('code') == 10000:
+                print("成功领取:", claim_response_json)
+            else:
+                print("今日已领取")
+        else:
+            print("未绑定推特或注册，请上号查看具体问题", login_response_json.get('msg'))
+    except Exception as e:
+        print(f"请求失败: {e}")
+
+if __name__ == "__main__":
+    with open('keys.txt', 'r') as file:
+        for line in file:
+            private_key = line.strip()
+            if private_key:
+                login_and_claim(private_key)
