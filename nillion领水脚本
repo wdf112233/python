@@ -1,0 +1,89 @@
+import requests
+import time
+
+# CapSolver API configuration
+api_key = "打码平台api"
+site_key = "6Le0TNUpAAAAAF6PF4LfeVBm56WbgdcPVV8Id6LF"
+site_url = "https://faucet.testnet.nillion.com"  # the target site URL
+faucet_url = "https://faucet.testnet.blockchain-cluster.nilogy.xyz/credit"
+address = "钱包地址"
+denom = "unil"
+
+def get_recaptcha_token():
+    # Prepare the payload for CapSolver
+    payload = {
+        "clientKey": api_key,
+        "task": {
+            "type": "ReCaptchaV2TaskProxyLess",
+            "websiteKey": site_key,
+            "websiteURL": site_url
+        }
+    }
+
+    # Create a task on CapSolver
+    response = requests.post("https://api.capsolver.com/createTask", json=payload)
+    result = response.json()
+    task_id = result.get("taskId")
+    if not task_id:
+        print("Failed to create task:", response.text)
+        return None
+    print(f"Task created successfully. Task ID: {task_id}")
+
+    # Poll for task completion
+    while True:
+        time.sleep(3)  # wait before polling again
+        result_response = requests.post("https://api.capsolver.com/getTaskResult", json={
+            "clientKey": api_key,
+            "taskId": task_id
+        })
+        result_data = result_response.json()
+        if result_data.get("status") == "ready":
+            print("Captcha solved successfully!")
+            return result_data["solution"]["gRecaptchaResponse"]
+        elif result_data.get("status") == "failed":
+            print("Failed to solve captcha:", result_data)
+            return None
+
+def request_faucet_credit(recaptcha_token):
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-encoding": "gzip, deflate, br",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "content-type": "application/json",
+        "origin": "https://faucet.testnet.nillion.com",
+        "referer": "https://faucet.testnet.nillion.com/",
+        "sec-ch-ua": "\"Chromium\";v=\"99\", \"Google Chrome\";v=\"99\", \"Not?A_Brand\";v=\"99\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cross-site",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.0.0 Safari/537.36"
+    }
+
+    payload = {
+        "recaptcha": recaptcha_token,
+        "denom": denom,
+        "address": address
+    }
+
+    # Send the reCAPTCHA token and other data to the faucet endpoint
+    response = requests.post(faucet_url, headers=headers, json=payload)
+
+    if response.status_code == 200:
+        # Attempt to parse JSON response, handle non-JSON response gracefully
+        try:
+            json_response = response.json()
+            print("Faucet credit request successful! Response:", json_response)
+        except requests.exceptions.JSONDecodeError:
+            print("Faucet credit request succeeded but response is not JSON.")
+            print("Response text:", response.text)
+    else:
+        print("Faucet credit request failed. Status code:", response.status_code)
+        print("Response:", response.text)
+
+# Execute the full flow
+if __name__ == "__main__":
+    token = get_recaptcha_token()
+    if token:
+        request_faucet_credit(token)
