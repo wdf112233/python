@@ -1,0 +1,208 @@
+#!/usr/bin/python
+# coding=utf-8
+import requests
+from web3 import Web3
+from eth_account import Account
+from eth_account.messages import encode_defunct
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import os
+
+# Falcon Finance API 端点
+CHALLENGE_URL = "https://api.falcon.finance/api/v1/wallets/challenge"
+SIGN_IN_URL = "https://api.falcon.finance/api/v1/wallets/sign_in"
+REFERRAL_CODE = "cfa49a55b3b7bde50449d1d97f1b12ea"#这里填邀请码
+
+# 线程锁，用于同步访问 ip.txt
+file_lock = threading.Lock()
+
+def load_proxies():
+    """从 ip.txt 加载代理 IP。"""
+    with file_lock:
+        try:
+            with open("ip.txt", "r", encoding="utf-8") as f:
+                proxies = [line.strip() for line in f if line.strip()]
+            return proxies
+        except FileNotFoundError:
+            print("错误：未找到 ip.txt 文件。")
+            return []
+        except Exception as e:
+            print(f"读取 ip.txt 文件出错：{e}")
+            return []
+
+def remove_proxy(proxy):
+    """从 ip.txt 中删除已使用的代理 IP。"""
+    with file_lock:
+        try:
+            with open("ip.txt", "r", encoding="utf-8") as f:
+                proxies = [line.strip() for line in f if line.strip()]
+            if proxy in proxies:
+                proxies.remove(proxy)
+                with open("ip.txt", "w", encoding="utf-8") as f:
+                    for p in proxies:
+                        f.write(p + "\n")
+                print(f"已从 ip.txt 删除代理：{proxy}")
+            else:
+                print(f"代理 {proxy} 不在 ip.txt 中，无需删除。")
+        except Exception as e:
+            print(f"删除代理 {proxy} 出错：{e}")
+
+def get_proxy_config(proxy):
+    """将代理 IP:PORT 转换为 requests 兼容的代理配置。"""
+    if ":" not in proxy:
+        print(f"代理格式无效：{proxy}")
+        return None
+    proxy_host, proxy_port = proxy.split(":")
+    proxy_meta = f"http://{proxy_host}:{proxy_port}"
+    return {
+        "http": proxy_meta,
+        "https": proxy_meta
+    }
+
+def generate_wallet():
+    """生成新的以太坊钱包，包含地址和私钥。"""
+    account = Account.create()
+    return account.address, account.key.hex()
+
+def get_challenge(address, proxies):
+    """使用指定代理为给定地址获取挑战字符串。"""
+    params = {
+        "address": address,
+        "challenge_type": "sign_in"
+    }
+    try:
+        response = requests.get(CHALLENGE_URL, params=params, proxies=proxies, timeout=10)
+        if response.status_code == 200:
+            return response.json().get("challenge")
+        else:
+            print(f"获取 {address} 的挑战失败：{response.text}")
+            return None
+    except Exception as e:
+        print(f"获取 {address} 的挑战出错：{e}")
+        return None
+
+def sign_challenge(challenge, private_key):
+    """使用私钥对挑战字符串进行签名。"""
+    w3 = Web3()
+    message = encode_defunct(text=challenge)
+    signed_message = w3.eth.account.sign_message(message, private_key=private_key)
+    return signed_message.signature.hex()
+
+def sign_in(address, challenge, signature, proxies):
+    """使用指定代理发送签名后的登录请求。"""
+    params = {
+        "address": address,
+        "challenge": challenge,
+        "signature": signature,
+        "signature_type": "eoa",
+        "referral": REFERRAL_CODE
+    }
+    try:
+        response = requests.post(SIGN_IN_URL, params=params, proxies=proxies, timeout=10)
+        return response
+    except Exception as e:
+        print(f"{address} 登录出错：{e}")
+        return None
+
+def process_invitation(proxy):
+    """处理单个邀请，使用指定代理。"""
+    proxies = get_proxy_config(proxy)
+    if not proxies:
+        print(f"由于代理无效，跳过邀请：{proxy}")
+        return False
+
+    print(f"使用代理：{proxy}")
+
+    # 生成新钱包
+    address, private_key = generate_wallet()
+    print(f"生成钱包：{address}")
+
+    # 获取挑战
+    challenge = get_challenge(address, proxies)
+    if not challenge:
+        print(f"由于获取挑战失败，跳过 {address} 的邀请。")
+        return False
+
+    # 签名挑战
+    signature = sign_challenge(challenge, private_key)
+    print(f"已为 {address} 签名挑战")
+
+    # 发送登录请求
+    response = sign_in(address, challenge, signature, proxies)
+    if response and response.status_code == 200:
+        response_data = response.json()
+        if "api_key" in response_data and "expires_at" in response_data:
+            print(f"{address} 邀请成功！")
+            print(f"API 密钥：{response_data['api_key']}")
+            print(f"过期时间：{response_data['expires_at']}")
+            return True
+        else:
+            print(f"{address} 返回意外响应：{response_data}")
+            return False
+    else:
+        print(f"{address} 登录失败：无响应或发生错误。")
+        return False
+
+def invite_batch(num_invitations, delay_seconds, proxy_list, max_threads):
+    """为指定数量的用户生成钱包并发送邀请，每个用户使用唯一代理 IP，使用多线程。"""
+    successful_invitations = 0
+    available_proxies = proxy_list.copy()  # 复制以避免修改原始列表
+
+    def worker(proxy, index):
+        print(f"\n处理第 {index + 1}/{num_invitations} 个邀请...")
+        success = process_invitation(proxy)
+        remove_proxy(proxy)  # 删除已使用的代理
+        return success
+
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+        futures = []
+        for i in range(min(num_invitations, len(available_proxies))):
+            if not available_proxies:
+                print("错误：没有更多可用代理。停止处理。")
+                break
+            proxy = available_proxies.pop(0)
+            futures.append(executor.submit(worker, proxy, i))
+            if i < num_invitations - 1 and available_proxies:
+                print(f"等待 {delay_seconds} 秒以避免速率限制...")
+                time.sleep(delay_seconds)
+
+        for future in futures:
+            if future.result():
+                successful_invitations += 1
+
+    print(f"\n完成！成功邀请 {successful_invitations}/{num_invitations} 个用户。")
+    if available_proxies:
+        print(f"剩余代理：{len(available_proxies)}")
+
+def main():
+    # 从 ip.txt 加载代理
+    proxy_list = load_proxies()
+    if not proxy_list:
+        print("未加载到代理。退出程序。")
+        return
+    print(f"从 ip.txt 加载了 {len(proxy_list)} 个代理")
+
+    try:
+        num_invitations = int(input("请输入要发送的邀请数量："))
+        if num_invitations <= 0:
+            print("请输入一个正数作为邀请数量。")
+            return
+        if num_invitations > len(proxy_list):
+            print(f"警告：只有 {len(proxy_list)} 个代理可用，但请求了 {num_invitations} 个邀请。")
+            num_invitations = min(num_invitations, len(proxy_list))
+        max_threads = int(input("请输入最大并发线程数（建议 1-10）："))
+        if max_threads <= 0:
+            print("请输入一个正数作为线程数量。")
+            return
+        max_threads = min(max_threads, num_invitations)  # 限制线程数不超过邀请数
+        delay_seconds = float(input("请输入每次邀请批次之间的延迟（秒，例如 1.5）："))
+        if delay_seconds < 0:
+            print("请输入一个非负的延迟时间。")
+            return
+        invite_batch(num_invitations, delay_seconds, proxy_list, max_threads)
+    except ValueError:
+        print("输入无效。请为邀请数量、线程数和延迟时间输入有效数字。")
+
+if __name__ == "__main__":
+    main()
