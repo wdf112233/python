@@ -1,0 +1,224 @@
+import requests
+import json
+import os
+import time
+from datetime import datetime
+import urllib3
+
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+class PointClaim:
+    def __init__(self):
+        self.is_running = False
+        self.client_username_file = "client_username.json"
+        self.processed_count = 0
+
+    def log_message(self, message):
+        """Print log messages with timestamp"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[{timestamp}] {message}")
+
+    def get_usernames_from_api(self):
+        """Fetch username data from API"""
+        try:
+            self.log_message("Fetching username data from API...")
+            response = requests.get("http://81.70.150.62:3000/api/usernames", timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+            if data.get("success"):
+                usernames = data.get("data", [])
+                self.log_message(f"Successfully retrieved {len(usernames)} usernames")
+                return usernames
+            else:
+                self.log_message("API returned failure status")
+                return []
+        except requests.exceptions.RequestException as e:
+            self.log_message(f"API request failed: {str(e)}")
+            return []
+        except Exception as e:
+            self.log_message(f"Error fetching username data: {str(e)}")
+            return []
+
+    def load_client_username_file(self):
+        """Load client_username.json file"""
+        try:
+            if os.path.exists(self.client_username_file):
+                with open(self.client_username_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data
+            else:
+                return []
+        except Exception as e:
+            self.log_message(f"Failed to load client_username file: {str(e)}")
+            return []
+
+    def save_client_username_file(self, data):
+        """Save data to client_username.json file"""
+        try:
+            with open(self.client_username_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            self.log_message(f"Saved {len(data)} usernames to {self.client_username_file}")
+            return True
+        except Exception as e:
+            self.log_message(f"Failed to save client_username file: {str(e)}")
+            return False
+
+    def update_client_username_data(self, api_usernames):
+        """Update client_username data"""
+        existing_data = self.load_client_username_file()
+
+        max_number = 0
+        if existing_data:
+            max_number = max([item.get("number", 0) for item in existing_data])
+
+        self.log_message(f"Current max number in file: {max_number}")
+
+        new_data = []
+        for user in api_usernames:
+            if user.get("number", 0) > max_number:
+                new_data.append({
+                    "number": user.get("number"),
+                    "username": user.get("username")
+                })
+
+        if new_data:
+            new_data.sort(key=lambda x: x.get("number", 0))
+            if self.save_client_username_file(new_data):
+                self.log_message(f"Found {len(new_data)} new usernames, saved to file")
+                return new_data
+        else:
+            self.log_message("No new username data to add")
+            return []
+
+        return []
+
+    def send_claim_request(self, username, cookie):
+        """Send point claim request"""
+        try:
+            url = "https://addplus.org/api/trpc/users.claimPoints?batch=1"
+
+            headers = {
+                "Host": "addplus.org",
+                "Connection": "keep-alive",
+                "sec-ch-ua-platform": "\"Windows\"",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+                "sec-ch-ua": "\"Not)A;Brand\";v=\"8\", \"Chromium\";v=\"138\", \"Google Chrome\";v=\"138\"",
+                "trpc-accept": "application/jsonl",
+                "content-type": "application/json",
+                "x-trpc-source": "nextjs-react",
+                "sec-ch-ua-mobile": "?0",
+                "Accept": "*/*",
+                "Origin": "https://addplus.org",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty",
+                "Referer": f"https://addplus.org/boost/{username}",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+                "Cookie": cookie
+            }
+
+            payload = {
+                "0": {
+                    "json": {
+                        "username": username
+                    }
+                }
+            }
+
+            response = requests.post(url, headers=headers, json=payload, timeout=30, verify=False)
+
+            if response.status_code == 200:
+                self.log_message(f"✅ {username} - Claim successful")
+                return True
+            else:
+                self.log_message(f"❌ {username} - Claim failed (Status code: {response.status_code})")
+                return False
+
+        except requests.exceptions.RequestException as e:
+            self.log_message(f"❌ {username} - Network request failed: {str(e)}")
+            return False
+        except Exception as e:
+            self.log_message(f"❌ {username} - Error sending request: {str(e)}")
+            return False
+
+    def claim_process(self, cookie):
+        """Point claim process"""
+        try:
+            if not cookie:
+                self.log_message("❌ Please provide a Cookie")
+                return
+
+            self.log_message("🚀 Starting point claim process...")
+
+            api_usernames = self.get_usernames_from_api()
+            if not api_usernames:
+                self.log_message("❌ Unable to fetch username data, stopping process")
+                return
+
+            client_data = self.update_client_username_data(api_usernames)
+            if not client_data:
+                self.log_message("❌ No usernames to process")
+                return
+
+            self.log_message(f"Starting {len(client_data)} claim links...")
+
+            success_count = 0
+            for i, user_data in enumerate(client_data):
+                if not self.is_running:
+                    self.log_message("⏹️ Process stopped by user")
+                    break
+
+                username = user_data.get("username")
+                number = user_data.get("number")
+
+                if username:
+                    self.log_message(f"Processing #{number} - {username}... ({i + 1}/{len(client_data)})")
+                    self.processed_count = i + 1
+
+                    if self.send_claim_request(username, cookie):
+                        success_count += 1
+
+                    if self.is_running and i < len(client_data) - 1:
+                        time.sleep(0.02)
+
+            if self.is_running:
+                self.log_message(f"🎉 Claim process completed! Successful: {success_count}/{len(client_data)}")
+
+        except Exception as e:
+            self.log_message(f"❌ Error in claim process: {str(e)}")
+        finally:
+            self.is_running = False
+
+    def start(self, cookie):
+        """Start the claim process"""
+        if not self.is_running:
+            if not cookie:
+                print("❌ Please provide a Cookie")
+                return
+
+            self.is_running = True
+            self.processed_count = 0
+            self.log_message("🎯 Preparing to start claim process...")
+            self.claim_process(cookie)
+
+    def stop(self):
+        """Stop the claim process"""
+        if self.is_running:
+            self.is_running = False
+            self.log_message("🛑 Stopping claim process...")
+        else:
+            self.log_message("ℹ️ No process currently running")
+
+
+def main():
+    app = PointClaim()
+    cookie = input("Please enter your AddPlus website Cookie: ")
+    app.start(cookie)
+
+
+if __name__ == "__main__":
+    main()
